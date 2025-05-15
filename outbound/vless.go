@@ -1,8 +1,11 @@
 package outbound
 
 import (
+	bf "bufio"
 	"context"
+	"encoding/hex"
 	"net"
+	"time"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/dialer"
@@ -142,6 +145,8 @@ func (h *VLESS) Close() error {
 
 type vlessDialer VLESS
 
+const STARTTLS = "STARTTLS"
+
 func (h *vlessDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	ctx, metadata := adapter.ExtendContext(ctx)
 	metadata.Outbound = h.tag
@@ -152,11 +157,31 @@ func (h *vlessDialer) DialContext(ctx context.Context, network string, destinati
 		conn, err = h.transport.DialContext(ctx)
 	} else {
 		conn, err = h.dialer.DialContext(ctx, N.NetworkTCP, h.serverAddr)
+		if metadata.InboundOptions.SniffEnabled && conn != nil {
+			conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+			reader := bf.NewReader(conn)
+			peek, e := reader.Peek(len(STARTTLS))
+			h.logger.InfoContext(ctx, "read peek bytes:", hex.EncodeToString(peek))
+			if e == nil {
+				if string(peek) == STARTTLS {
+					_, e2 := reader.Discard(len(STARTTLS))
+					h.logger.InfoContext(ctx, "discard STARTTLS bytes")
+					if e2 != nil {
+						h.logger.InfoContext(ctx, "failed to discard STARTTLS bytes: ", err)
+					}
+				}
+			} else {
+				h.logger.InfoContext(ctx, "read peek bytes error: ", err)
+				conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+			}
+		}
 		if err == nil && h.tlsConfig != nil {
+			ctx, _ = context.WithTimeout(ctx, time.Minute)
 			conn, err = tls.ClientHandshake(ctx, conn, h.tlsConfig)
 		}
 	}
 	if err != nil {
+		h.logger.ErrorContext(ctx, "dial error: ", err)
 		return nil, err
 	}
 	switch N.NetworkName(network) {

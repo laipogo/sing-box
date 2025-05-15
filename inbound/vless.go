@@ -2,6 +2,8 @@ package inbound
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 
@@ -135,6 +137,15 @@ func (h *VLESS) newTransportConnection(ctx context.Context, conn net.Conn, metad
 
 func (h *VLESS) NewConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext) error {
 	var err error
+	fmt.Println("!metadata.InboundOptions.SniffEnabled", !metadata.InboundOptions.SniffEnabled)
+	marshal, _ := json.Marshal(metadata)
+	fmt.Println(marshal)
+	_, err = conn.Write([]byte("STARTTLS"))
+	if err != nil {
+		h.logger.Error("failed to send STARTTLS request: ", err)
+		return err
+	}
+	h.logger.Info("send STARTTLS request")
 	if h.tlsConfig != nil && h.transport == nil {
 		conn, err = tls.ServerHandshake(ctx, conn, h.tlsConfig)
 		if err != nil {
